@@ -1,125 +1,116 @@
-import React, { useMemo, useEffect, useState } from 'react'
-import Navbar from './components/Navbar'
+import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import Topbar from './components/Topbar'
 import Sidebar from './components/Sidebar'
-import CreateNote from './components/CreateNote'
+import Composer from './components/Composer'
 import NotesGrid from './components/NotesGrid'
-import { useLocalStorage } from './hooks/useLocalStorage'
+import NoteModal from './components/NoteModal'
+import Toast from './components/Toast'
 
-const SEED_NOTES = [
-  {
-    id: 'seed-1',
-    title: 'Welcome to Keep Clone 👋',
-    body: 'Click the box above to add a note. Drag the dot-grid handle to reorder, pin your favourites, and tap the palette icon to recolour a note.',
-    color: 'sand',
-    pinned: true,
-    tags: ['welcome'],
-  },
-  {
-    id: 'seed-2',
-    title: 'Groceries',
-    body: 'Eggs, spinach, oat milk, coffee, and something for dinner Friday.',
-    color: 'mint',
-    pinned: false,
-    tags: ['home'],
-  },
-  {
-    id: 'seed-3',
-    title: '',
-    body: 'Everything here is saved to localStorage, so it survives a refresh.',
-    color: 'fog',
-    pinned: false,
-    tags: [],
-  },
-]
+const STORAGE_KEY = 'google-keep-clone'
 
-function uid() {
-  return `note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+function loadNotes() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY)
+    return saved ? JSON.parse(saved) : []
+  } catch {
+    return []
+  }
+}
+
+function saveNotes(notes) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(notes))
+}
+
+function makeId() {
+  return typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `note-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
 export default function App() {
-  const [notes, setNotes] = useLocalStorage('keep-clone:notes', SEED_NOTES)
-  const [isDark, setIsDark] = useLocalStorage('keep-clone:dark-mode', false)
-  const [query, setQuery] = useLocalStorage('keep-clone:search', '')
-
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [notes, setNotes] = useState(loadNotes)
   const [currentView, setCurrentView] = useState('notes')
+  const [query, setQuery] = useState('')
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [isListView, setIsListView] = useState(false)
+  const [editingNote, setEditingNote] = useState(null)
+  const [pendingDelete, setPendingDelete] = useState(null) // { note }
 
   useEffect(() => {
-    document.documentElement.dataset.theme = isDark ? 'dark' : 'light'
-  }, [isDark])
+    saveNotes(notes)
+  }, [notes])
 
-  function addNote({ title, body, color, pinned, tags }) {
-    const newNote = {
-      id: uid(),
+  const createNote = useCallback(({ title, body, color }) => {
+    const note = {
+      id: makeId(),
       title,
       body,
       color: color || 'default',
-      pinned: !!pinned,
-      tags: tags || [],
+      archived: false,
+      createdAt: Date.now(),
     }
-    setNotes((prev) => [newNote, ...prev])
+    setNotes((prev) => [note, ...prev])
+  }, [])
+
+  const archiveNote = useCallback((id) => {
+    setNotes((prev) => prev.map((n) => (n.id === id ? { ...n, archived: true } : n)))
+  }, [])
+
+  const unarchiveNote = useCallback((id) => {
+    setNotes((prev) => prev.map((n) => (n.id === id ? { ...n, archived: false } : n)))
+  }, [])
+
+  const deleteNote = useCallback(
+    (id) => {
+      const note = notes.find((n) => n.id === id)
+      if (!note) return
+      setNotes((prev) => prev.filter((n) => n.id !== id))
+      setEditingNote(null)
+      setPendingDelete(note)
+    },
+    [notes]
+  )
+
+  function undoDelete() {
+    if (pendingDelete) {
+      setNotes((prev) => [pendingDelete, ...prev])
+      setPendingDelete(null)
+    }
   }
 
-  function deleteNote(id) {
-    setNotes((prev) => prev.filter((n) => n.id !== id))
+  function saveModalChanges(updatedNote) {
+    setNotes((prev) => prev.map((n) => (n.id === updatedNote.id ? updatedNote : n)))
+    setEditingNote(null)
   }
 
-  function togglePin(id) {
-    setNotes((prev) =>
-      prev.map((n) =>
-        n.id === id ? { ...n, pinned: !n.pinned } : n
-      )
-    )
-  }
-
-  function changeColor(id, color) {
-    setNotes((prev) =>
-      prev.map((n) =>
-        n.id === id ? { ...n, color } : n
-      )
-    )
-  }
-
-  function reorderNotes(draggingId, targetId) {
+  function toggleArchiveFromModal(id) {
     setNotes((prev) => {
-      const draggingNote = prev.find((n) => n.id === draggingId)
-      const targetNote = prev.find((n) => n.id === targetId)
-
-      if (!draggingNote || !targetNote) return prev
-      if (draggingNote.pinned !== targetNote.pinned) return prev
-
-      const withoutDragging = prev.filter((n) => n.id !== draggingId)
-      const targetIndex = withoutDragging.findIndex(
-        (n) => n.id === targetId
-      )
-
-      withoutDragging.splice(targetIndex, 0, draggingNote)
-      return withoutDragging
+      const next = prev.map((n) => (n.id === id ? { ...n, archived: !n.archived } : n))
+      const updated = next.find((n) => n.id === id)
+      setEditingNote(updated)
+      return next
     })
   }
 
-  const filteredNotes = useMemo(() => {
+  const visibleNotes = useMemo(() => {
     const q = query.trim().toLowerCase()
-
-    if (!q) return notes
-
-    return notes.filter((n) => {
-      const haystack = [n.title, n.body, ...(n.tags || [])]
-        .join(' ')
-        .toLowerCase()
-
-      return haystack.includes(q)
+    return notes.filter((note) => {
+      const matchesView = note.archived === (currentView === 'archive')
+      const matchesQuery =
+        !q || note.title.toLowerCase().includes(q) || note.body.toLowerCase().includes(q)
+      return matchesView && matchesQuery
     })
-  }, [notes, query])
+  }, [notes, currentView, query])
 
   return (
-    <div className="app">
-      <Navbar
+    <>
+      <Topbar
+        onMenuToggle={() => setSidebarOpen((s) => !s)}
         query={query}
         onQueryChange={setQuery}
-        isDark={isDark}
-        onToggleDark={() => setIsDark((d) => !d)}
-        noteCount={notes.length}
+        onRefresh={() => setNotes(loadNotes())}
+        isListView={isListView}
+        onToggleListView={() => setIsListView((v) => !v)}
       />
 
       <div className="layout">
@@ -131,23 +122,37 @@ export default function App() {
         />
 
         <main className="board" id="board">
-          <CreateNote onAdd={addNote} isDark={isDark} />
+          {currentView === 'notes' && <Composer onCreate={createNote} />}
 
           <NotesGrid
-            notes={filteredNotes}
-            isDark={isDark}
-            onTogglePin={togglePin}
+            notes={visibleNotes}
+            isListView={isListView}
+            currentView={currentView}
+            onOpen={setEditingNote}
+            onArchive={archiveNote}
+            onUnarchive={unarchiveNote}
             onDelete={deleteNote}
-            onColorChange={changeColor}
-            onReorder={reorderNotes}
-            emptyMessage={
-              query
-                ? `No notes match "${query}"`
-                : 'Notes you add will show up here'
-            }
           />
         </main>
       </div>
-    </div>
+
+      {editingNote && (
+        <NoteModal
+          note={editingNote}
+          onClose={saveModalChanges}
+          onArchiveToggle={toggleArchiveFromModal}
+          onDelete={deleteNote}
+        />
+      )}
+
+      {pendingDelete && (
+        <Toast
+          message="Note deleted"
+          actionLabel="Undo"
+          onAction={undoDelete}
+          onExpire={() => setPendingDelete(null)}
+        />
+      )}
+    </>
   )
 }
