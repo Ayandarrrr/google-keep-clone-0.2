@@ -1,5 +1,6 @@
-import React, { useMemo, useEffect } from 'react'
+import React, { useMemo, useEffect, useState } from 'react'
 import Navbar from './components/Navbar'
+import Sidebar from './components/Sidebar'
 import CreateNote from './components/CreateNote'
 import NotesGrid from './components/NotesGrid'
 import { useLocalStorage } from './hooks/useLocalStorage'
@@ -40,6 +41,9 @@ export default function App() {
   const [isDark, setIsDark] = useLocalStorage('keep-clone:dark-mode', false)
   const [query, setQuery] = useLocalStorage('keep-clone:search', '')
 
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [currentView, setCurrentView] = useState('notes')
+
   useEffect(() => {
     document.documentElement.dataset.theme = isDark ? 'dark' : 'light'
   }, [isDark])
@@ -61,21 +65,34 @@ export default function App() {
   }
 
   function togglePin(id) {
-    setNotes((prev) => prev.map((n) => (n.id === id ? { ...n, pinned: !n.pinned } : n)))
+    setNotes((prev) =>
+      prev.map((n) =>
+        n.id === id ? { ...n, pinned: !n.pinned } : n
+      )
+    )
   }
 
   function changeColor(id, color) {
-    setNotes((prev) => prev.map((n) => (n.id === id ? { ...n, color } : n)))
+    setNotes((prev) =>
+      prev.map((n) =>
+        n.id === id ? { ...n, color } : n
+      )
+    )
   }
 
   function reorderNotes(draggingId, targetId) {
     setNotes((prev) => {
       const draggingNote = prev.find((n) => n.id === draggingId)
       const targetNote = prev.find((n) => n.id === targetId)
+
       if (!draggingNote || !targetNote) return prev
       if (draggingNote.pinned !== targetNote.pinned) return prev
+
       const withoutDragging = prev.filter((n) => n.id !== draggingId)
-      const targetIndex = withoutDragging.findIndex((n) => n.id === targetId)
+      const targetIndex = withoutDragging.findIndex(
+        (n) => n.id === targetId
+      )
+
       withoutDragging.splice(targetIndex, 0, draggingNote)
       return withoutDragging
     })
@@ -83,9 +100,14 @@ export default function App() {
 
   const filteredNotes = useMemo(() => {
     const q = query.trim().toLowerCase()
+
     if (!q) return notes
+
     return notes.filter((n) => {
-      const haystack = [n.title, n.body, ...(n.tags || [])].join(' ').toLowerCase()
+      const haystack = [n.title, n.body, ...(n.tags || [])]
+        .join(' ')
+        .toLowerCase()
+
       return haystack.includes(q)
     })
   }, [notes, query])
@@ -99,20 +121,33 @@ export default function App() {
         onToggleDark={() => setIsDark((d) => !d)}
         noteCount={notes.length}
       />
-      <main className="app-main">
-        <CreateNote onAdd={addNote} isDark={isDark} />
-        <NotesGrid
-          notes={filteredNotes}
-          isDark={isDark}
-          onTogglePin={togglePin}
-          onDelete={deleteNote}
-          onColorChange={changeColor}
-          onReorder={reorderNotes}
-          emptyMessage={
-            query ? `No notes match "${query}"` : 'Notes you add will show up here'
-          }
+
+      <div className="layout">
+        <Sidebar
+          currentView={currentView}
+          onSelectView={setCurrentView}
+          expanded={sidebarOpen}
+          mobileOpen={sidebarOpen}
         />
-      </main>
+
+        <main className="board" id="board">
+          <CreateNote onAdd={addNote} isDark={isDark} />
+
+          <NotesGrid
+            notes={filteredNotes}
+            isDark={isDark}
+            onTogglePin={togglePin}
+            onDelete={deleteNote}
+            onColorChange={changeColor}
+            onReorder={reorderNotes}
+            emptyMessage={
+              query
+                ? `No notes match "${query}"`
+                : 'Notes you add will show up here'
+            }
+          />
+        </main>
+      </div>
     </div>
   )
 }
